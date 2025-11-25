@@ -1,72 +1,90 @@
 // src/components/Avatar.tsx
-// FINAL VERSION – ZERO TypeScript errors
+// FIXED VERSION – Working Lip Sync
 
-import * as THREE from 'three'
-import  { useRef, useMemo, useEffect } from 'react'
-import { useFrame } from '@react-three/fiber'
-import { useGLTF } from '@react-three/drei'
-//import { useGraph } from '@react-three/fiber'
-import { SkeletonUtils } from 'three-stdlib'
-import type { ThreeElements } from '@react-three/fiber'
+import * as THREE from "three";
+import { useRef, useMemo, useEffect } from "react";
+import { useFrame } from "@react-three/fiber";
+import { useGLTF } from "@react-three/drei";
+import { SkeletonUtils } from "three-stdlib";
+import type { ThreeElements } from "@react-three/fiber";
 
-
-type AvatarProps = ThreeElements['group'] & {
-  expression: 'happy' | 'sad' | 'angry' | 'neutral'
-  text?: string
-  speak?: boolean
-  onSpeakEnd?: () => void
-}
+type AvatarProps = ThreeElements["group"] & {
+  expression: "happy" | "sad" | "angry" | "neutral";
+  text?: string;
+  speak?: boolean;
+  onSpeakEnd?: () => void;
+};
 
 export function Avatar(props: AvatarProps) {
-  const { expression, text = '', speak = false, onSpeakEnd, ...groupProps } = props
+  const {
+    expression,
+    text = "",
+    speak = false,
+    onSpeakEnd,
+    ...groupProps
+  } = props;
 
-  const { scene } = useGLTF('/models/avatar.glb')
-  const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene])
-  //const { nodes, materials } = useGraph(clonedScene) as any
+  const { scene } = useGLTF("/models/avatar.glb");
+  const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
 
   // Strongly typed refs
-  const headRef = useRef<THREE.SkinnedMesh & {
-    morphTargetDictionary: Record<string, number>
-    morphTargetInfluences: number[]
-  }>(null!)
+  const headRef = useRef<THREE.SkinnedMesh | null>(null);
+  const teethRef = useRef<THREE.SkinnedMesh | null>(null);
 
-  const teethRef = useRef<THREE.SkinnedMesh & {
-    morphTargetDictionary?: Record<string, number>
-    morphTargetInfluences?: number[]
-  } | null>(null)
-
-  const targetMorphs = useRef<Record<string, number>>({})
-  const currentViseme = useRef<string | null>(null)
-  const smoothing = 0.12
+  const targetMorphs = useRef<Record<string, number>>({});
+  const currentViseme = useRef<string | null>(null);
+  const visemeStrength = useRef<number>(0);
+  const smoothing = 0.12;
 
   // ─────────────────────────────────────────────────────────────
-  // 1. Initialize morph arrays + dictionary (guarantees no undefined)
+  // 1. Find and attach refs to meshes in the cloned scene
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    const head = headRef.current
-    const teeth = teethRef.current
+    clonedScene.traverse((child) => {
+      if (child instanceof THREE.SkinnedMesh) {
+        if (child.name === "Wolf3D_Head") {
+          headRef.current = child;
+          // Initialize morph targets
+          if (!child.morphTargetInfluences) child.morphTargetInfluences = [];
+          if (!child.morphTargetDictionary) child.updateMorphTargets?.();
+        } else if (child.name === "Wolf3D_Teeth") {
+          teethRef.current = child;
+          if (!child.morphTargetInfluences) child.morphTargetInfluences = [];
+          if (!child.morphTargetDictionary) child.updateMorphTargets?.();
+        }
+      }
+    });
 
-    if (head) {
-      if (!head.morphTargetInfluences) head.morphTargetInfluences = []
-      if (!head.morphTargetDictionary) head.updateMorphTargets?.()
+    // Debug: Log available morphs
+    if (headRef.current?.morphTargetDictionary) {
+      console.log(
+        "Available morphs:",
+        Object.keys(headRef.current.morphTargetDictionary)
+      );
+      console.log(
+        "Visemes:",
+        Object.keys(headRef.current.morphTargetDictionary).filter(
+          (k) =>
+            k.toLowerCase().includes("viseme") ||
+            k.toLowerCase().includes("mouth")
+        )
+      );
     }
-    if (teeth) {
-      if (!teeth.morphTargetInfluences) teeth.morphTargetInfluences = []
-      if (!teeth.morphTargetDictionary) teeth.updateMorphTargets?.()
-    }
-  }, [])
+  }, [clonedScene]);
 
   // ─────────────────────────────────────────────────────────────
   // 2. Expression system
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    const head = headRef.current
-    if (!head?.morphTargetDictionary) return
+    const head = headRef.current;
+    if (!head?.morphTargetDictionary) return;
+
+    const dict = head.morphTargetDictionary;
 
     // Reset all
-    Object.keys(head.morphTargetDictionary).forEach(key => {
-      targetMorphs.current[key] = 0
-    })
+    Object.keys(dict).forEach((key) => {
+      targetMorphs.current[key] = 0;
+    });
 
     const exprMap: Record<string, Record<string, number>> = {
       happy: {
@@ -87,117 +105,192 @@ export function Avatar(props: AvatarProps) {
         mouthPress_Right: 0.9,
       },
       neutral: {},
-    }
+    };
 
-    const expr = exprMap[expression] || {}
+    const expr = exprMap[expression] || {};
     Object.entries(expr).forEach(([name, value]) => {
-      if (head.morphTargetDictionary[name] !== undefined) {
-        targetMorphs.current[name] = value
+      if (dict[name] !== undefined) {
+        targetMorphs.current[name] = value;
       }
-    })
-  }, [expression])
+    });
+  }, [expression]);
 
   // ─────────────────────────────────────────────────────────────
-  // 3. Lip Sync
+  // 3. FIXED Lip Sync with better timing
   // ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!speak || !text) return
-
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.lang = 'en-US'
-
-    const map: Record<string, string> = {
-      a: 'viseme_aa', e: 'viseme_E', i: 'viseme_IH',
-      o: 'viseme_O', u: 'viseme_U', f: 'viseme_FF',
-      m: 'viseme_PP', p: 'viseme_PP', b: 'viseme_PP',
+    if (!speak || !text) {
+      currentViseme.current = null;
+      visemeStrength.current = 0;
+      return;
     }
 
-    utterance.onboundary = e => {
-      if (e.name === 'word') {
-        const char = text[e.charIndex]?.toLowerCase()
-        currentViseme.current = map[char] ?? null
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+
+    // Character-by-character analysis for better lip sync
+    let charIndex = 0;
+    const chars = text.toLowerCase().split("");
+
+    // Animate mouth while speaking
+    const animationInterval = setInterval(() => {
+      if (charIndex < chars.length) {
+        const char = chars[charIndex];
+
+        // Map characters to visemes
+        const visemeMap: Record<string, string> = {
+          a: "viseme_aa",
+          e: "viseme_E",
+          i: "viseme_I",
+          o: "viseme_O",
+          u: "viseme_U",
+          p: "viseme_PP",
+          b: "viseme_PP",
+          m: "viseme_PP",
+          f: "viseme_FF",
+          v: "viseme_FF",
+        };
+
+        const viseme = visemeMap[char];
+        if (viseme) {
+          currentViseme.current = viseme;
+          visemeStrength.current = 1.0;
+        } else if (char !== " ") {
+          // Generic mouth movement for other characters
+          currentViseme.current = "mouthOpen";
+          visemeStrength.current = 0.3;
+        }
+
+        charIndex++;
       }
-    }
+    }, 80); // Adjust timing as needed
 
     utterance.onend = () => {
-      currentViseme.current = null
-      onSpeakEnd?.()
-    }
+      clearInterval(animationInterval);
+      currentViseme.current = null;
+      visemeStrength.current = 0;
+      onSpeakEnd?.();
+    };
 
-    speechSynthesis.cancel()
-    speechSynthesis.speak(utterance)
-  }, [speak, text, onSpeakEnd])
+    utterance.onerror = () => {
+      clearInterval(animationInterval);
+      currentViseme.current = null;
+      visemeStrength.current = 0;
+      onSpeakEnd?.();
+    };
+
+    // Cancel previous speech
+    speechSynthesis.cancel();
+    speechSynthesis.speak(utterance);
+
+    return () => {
+      clearInterval(animationInterval);
+      speechSynthesis.cancel();
+    };
+  }, [speak, text, onSpeakEnd]);
 
   // ─────────────────────────────────────────────────────────────
-  // 4. Animation loop – 100% safe
+  // 4. Animation loop – Apply morphs
   // ─────────────────────────────────────────────────────────────
   useFrame(() => {
-    const head = headRef.current
-    if (!head?.morphTargetInfluences || !head.morphTargetDictionary) return
+    const head = headRef.current;
+    if (!head?.morphTargetInfluences || !head.morphTargetDictionary) return;
 
-    const dict = head.morphTargetDictionary
-    const teeth = teethRef.current
+    const dict = head.morphTargetDictionary;
+    const influences = head.morphTargetInfluences;
+    const teeth = teethRef.current;
 
-    // Apply expressions
-    Object.keys(dict).forEach(key => {
-      const idx = dict[key]
-      const target = targetMorphs.current[key] ?? 0
+    // Apply base expressions
+    Object.keys(dict).forEach((key) => {
+      const idx = dict[key];
+      if (idx === undefined) return;
 
-      head.morphTargetInfluences[idx] = THREE.MathUtils.lerp(
-        head.morphTargetInfluences[idx],
+      const target = targetMorphs.current[key] ?? 0;
+      influences[idx] = THREE.MathUtils.lerp(
+        influences[idx] || 0,
         target,
         smoothing
-      )
+      );
 
-      if (teeth?.morphTargetDictionary?.[key] !== undefined) {
-        teeth.morphTargetInfluences![teeth.morphTargetDictionary[key]] = head.morphTargetInfluences[idx]
-      }
-    })
-
-    // Viseme override
-    if (currentViseme.current && dict[currentViseme.current] !== undefined) {
-      const idx = dict[currentViseme.current]
-      head.morphTargetInfluences[idx] = THREE.MathUtils.lerp(head.morphTargetInfluences[idx], 1, 0.4)
-    }
-
-    // Reset visemes when silent
-    if (currentViseme.current === null) {
-      const visemes = ['viseme_aa', 'viseme_E', 'viseme_O', 'viseme_U', 'viseme_IH', 'viseme_FF', 'viseme_PP']
-      visemes.forEach(v => {
-        const idx = dict[v]
-        if (idx !== undefined) {
-          head.morphTargetInfluences[idx] = THREE.MathUtils.lerp(head.morphTargetInfluences[idx], 0, 0.3)
+      // Sync teeth
+      if (teeth?.morphTargetDictionary && teeth.morphTargetInfluences) {
+        const teethDict = teeth.morphTargetDictionary;
+        if (teethDict[key] !== undefined) {
+          const teethIdx = teethDict[key];
+          teeth.morphTargetInfluences[teethIdx] = influences[idx];
         }
-      })
+      }
+    });
+
+    // Apply active viseme (OVERRIDE for lip sync)
+    if (currentViseme.current && visemeStrength.current > 0) {
+      const visemeName = currentViseme.current;
+      const idx = dict[visemeName];
+
+      if (idx !== undefined) {
+        const targetValue = visemeStrength.current;
+        influences[idx] = THREE.MathUtils.lerp(
+          influences[idx] || 0,
+          targetValue,
+          0.5 // Fast response for lip sync
+        );
+
+        // Sync teeth
+        if (teeth?.morphTargetDictionary && teeth.morphTargetInfluences) {
+          const teethDict = teeth.morphTargetDictionary;
+          if (teethDict[visemeName] !== undefined) {
+            const teethIdx = teethDict[visemeName];
+            teeth.morphTargetInfluences[teethIdx] = influences[idx];
+          }
+        }
+      }
+
+      // Decay strength
+      visemeStrength.current *= 0.9;
+    } else {
+      // Smoothly close mouth when not speaking
+      const mouthMorphs = Object.keys(dict).filter(
+        (k) => k.toLowerCase().includes("viseme") || k === "mouthOpen"
+      );
+
+      mouthMorphs.forEach((morphName) => {
+        const idx = dict[morphName];
+        if (idx !== undefined) {
+          influences[idx] = THREE.MathUtils.lerp(influences[idx] || 0, 0, 0.3);
+        }
+      });
     }
-  })
+  });
+
+  useEffect(() => {
+    setTimeout(() => {
+      const head = headRef.current;
+      if (head?.morphTargetDictionary) {
+        const visemes = Object.keys(head.morphTargetDictionary).filter((k) =>
+          k.includes("viseme")
+        );
+        console.log("Your avatar has these visemes →", visemes);
+        if (visemes.length === 0) {
+          console.error(
+            'NO VISEMES! You downloaded the wrong avatar. Re-download with "Oculus Visemes" checked!'
+          );
+        }
+      }
+    }, 3000);
+  }, []);
 
   // ─────────────────────────────────────────────────────────────
-  // Render
+  // Render - Simple approach
   // ─────────────────────────────────────────────────────────────
- // FINAL WORKING RETURN — COPY-PASTE THIS
-return (
-  <group {...groupProps} dispose={null}>
-    {/* This renders the entire cloned avatar correctly */}
-    <primitive object={clonedScene} scale={1.6} position={[0, -1.6, 0]} />
-
-    {/* Attach our refs to the actual head/teeth meshes inside the cloned scene */}
-    {clonedScene.getObjectByName('Wolf3D_Head') && (
-      <primitive
-        object={clonedScene.getObjectByName('Wolf3D_Head')!}
-        ref={headRef}
-      />
-    )}
-    {clonedScene.getObjectByName('Wolf3D_Teeth') && (
-      <primitive
-        object={clonedScene.getObjectByName('Wolf3D_Teeth')!}
-        ref={teethRef}
-      />
-    )}
-  </group>
-)
+  return (
+    <group {...groupProps} dispose={null}>
+      <primitive object={clonedScene} scale={1.6} position={[0, -1.6, 0]} />
+    </group>
+  );
 }
 
-useGLTF.preload('/models/avatar.glb')
+useGLTF.preload("/models/avatar.glb");
 
-export default Avatar
+export default Avatar;
