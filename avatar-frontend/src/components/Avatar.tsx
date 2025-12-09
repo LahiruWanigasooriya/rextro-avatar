@@ -8,12 +8,39 @@ import { SkeletonUtils } from "three-stdlib";
 import type { ThreeElements } from "@react-three/fiber";
 import { EXPRESSIONS, type ExpressionType } from './expressions';
 
+// --- Lip Sync Types & Mapping ---
+
+export interface LipSyncPhoneme {
+  phoneme: string;
+  viseme: string;
+  start: number;
+  end: number;
+}
+
+export interface LipSyncData {
+  text: string;
+  phonemes: LipSyncPhoneme[];
+}
+
+// Map A-G visemes to Ready Player Me morph targets
+const VISEME_MAP: Record<string, string> = {
+  A: "viseme_aa", // mouth open wide
+  B: "viseme_E",  // wide smile (using E/I shape)
+  C: "viseme_I",  // small opening
+  D: "viseme_O",  // rounded lips
+  E: "viseme_FF", // teeth touching (F/V)
+  F: "viseme_TH", // tongue touch (L/Th)
+  G: "viseme_PP", // closed lips (M/B/P)
+};
+
 type AvatarProps = ThreeElements["group"] & {
   expression: ExpressionType;
   text?: string;
   speak?: boolean;
   onSpeakEnd?: () => void;
   audioStream?: MediaStream; // Optional audio stream for real-time lip sync
+  lipSync?: LipSyncData | null; // Pre-generated lip sync data
+  audioElement?: HTMLAudioElement | null; // Audio element for syncing
 };
 
 export function Avatar(props: AvatarProps) {
@@ -23,6 +50,8 @@ export function Avatar(props: AvatarProps) {
     speak = false,
     onSpeakEnd,
     audioStream,
+    lipSync,
+    audioElement,
     ...groupProps
   } = props;
 
@@ -57,7 +86,7 @@ export function Avatar(props: AvatarProps) {
 
     if (headRef.current?.morphTargetDictionary) {
       console.log("Available morphs:", Object.keys(headRef.current.morphTargetDictionary));
-      console.log("Visemes:", Object.keys(headRef.current.morphTargetDictionary).filter(k => 
+      console.log("Visemes:", Object.keys(headRef.current.morphTargetDictionary).filter(k =>
         k.toLowerCase().includes('viseme') || k.toLowerCase().includes('mouth')
       ));
     }
@@ -88,29 +117,29 @@ export function Avatar(props: AvatarProps) {
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
     const analyser = audioContext.createAnalyser();
     const source = audioContext.createMediaStreamSource(audioStream);
-    
+
     analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.8;
     source.connect(analyser);
-    
+
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
-    
+
     let animationId: number;
-    
+
     const analyze = () => {
       analyser.getByteFrequencyData(dataArray);
-      
+
       // Calculate average volume
       const average = dataArray.reduce((sum, value) => sum + value, 0) / bufferLength;
       const normalizedVolume = average / 255;
-      
+
       if (normalizedVolume > 0.02) {
         // Analyze frequency bands for better viseme selection
         const lowFreq = dataArray.slice(0, 10).reduce((sum, v) => sum + v, 0) / 10 / 255;
         const midFreq = dataArray.slice(10, 30).reduce((sum, v) => sum + v, 0) / 20 / 255;
         const highFreq = dataArray.slice(30, 60).reduce((sum, v) => sum + v, 0) / 30 / 255;
-        
+
         // More sophisticated viseme selection based on formants
         if (highFreq > 0.3 && highFreq > midFreq * 1.2) {
           currentViseme.current = 'viseme_I'; // ee/i sounds
@@ -135,12 +164,12 @@ export function Avatar(props: AvatarProps) {
           visemeStrength.current = 0;
         }
       }
-      
+
       animationId = requestAnimationFrame(analyze);
     };
-    
+
     analyze();
-    
+
     return () => {
       cancelAnimationFrame(animationId);
       source.disconnect();
@@ -150,9 +179,9 @@ export function Avatar(props: AvatarProps) {
 
   // Text-to-speech lip sync (fallback when no audio stream)
   useEffect(() => {
-    // Skip TTS if we have a real audio stream (from OpenAI Realtime API)
-    if (audioStream || !speak || !text) {
-      if (!audioStream && !speak) {
+    // Skip TTS if we have a real audio stream OR if we have lipSync data
+    if (audioStream || lipSync || !speak || !text) {
+      if (!audioStream && !lipSync && !speak) {
         currentViseme.current = null;
         visemeStrength.current = 0;
       }
@@ -175,8 +204,8 @@ export function Avatar(props: AvatarProps) {
 
     // Try to find a Sinhala voice, fallback to default
     const voices = speechSynthesis.getVoices();
-    const sinhalaVoice = voices.find(voice => voice.lang.startsWith('si')) || 
-                         voices.find(voice => voice.lang.startsWith('en'));
+    const sinhalaVoice = voices.find(voice => voice.lang.startsWith('si')) ||
+      voices.find(voice => voice.lang.startsWith('en'));
     if (sinhalaVoice) {
       utterance.voice = sinhalaVoice;
     }
@@ -184,20 +213,20 @@ export function Avatar(props: AvatarProps) {
     let animationFrame: number;
     const analyzeAudio = () => {
       if (!analyserRef.current || !audioDataRef.current) return;
-      
+
       analyserRef.current.getByteFrequencyData(audioDataRef.current);
-      
+
       // Calculate average volume
       const average = audioDataRef.current.reduce((sum, value) => sum + value, 0) / audioDataRef.current.length;
       const normalizedVolume = average / 255;
-      
+
       // Map volume to mouth opening
       if (normalizedVolume > 0.05) {
         // Determine viseme based on frequency distribution
         const lowFreq = audioDataRef.current.slice(0, 10).reduce((sum, v) => sum + v, 0) / 10;
         const midFreq = audioDataRef.current.slice(10, 30).reduce((sum, v) => sum + v, 0) / 20;
         const highFreq = audioDataRef.current.slice(30, 60).reduce((sum, v) => sum + v, 0) / 30;
-        
+
         // Select viseme based on frequency content
         if (highFreq > midFreq && highFreq > lowFreq) {
           currentViseme.current = 'viseme_I'; // High frequencies = ee/i sounds
@@ -206,7 +235,7 @@ export function Avatar(props: AvatarProps) {
         } else {
           currentViseme.current = 'viseme_aa'; // Mid frequencies = ah sounds
         }
-        
+
         visemeStrength.current = Math.min(normalizedVolume * 2, 1.0);
       } else {
         visemeStrength.current *= 0.8;
@@ -215,7 +244,7 @@ export function Avatar(props: AvatarProps) {
           visemeStrength.current = 0;
         }
       }
-      
+
       animationFrame = requestAnimationFrame(analyzeAudio);
     };
 
@@ -244,7 +273,7 @@ export function Avatar(props: AvatarProps) {
       cancelAnimationFrame(animationFrame);
       speechSynthesis.cancel();
     };
-  }, [speak, text, onSpeakEnd, audioStream]);
+  }, [speak, text, onSpeakEnd, audioStream, lipSync]);
 
   useFrame(() => {
     const head = headRef.current;
@@ -253,6 +282,29 @@ export function Avatar(props: AvatarProps) {
     const dict = head.morphTargetDictionary;
     const influences = head.morphTargetInfluences;
     const teeth = teethRef.current;
+
+    // --- Lip Sync Logic (JSON + AudioElement) ---
+    if (lipSync && audioElement && !audioElement.paused) {
+      const currentTime = audioElement.currentTime;
+
+      // Find the active phoneme
+      const activePhoneme = lipSync.phonemes.find(
+        (p) => currentTime >= p.start && currentTime <= p.end
+      );
+
+      if (activePhoneme) {
+        const mappedViseme = VISEME_MAP[activePhoneme.viseme] || "viseme_aa";
+        currentViseme.current = mappedViseme;
+
+        // Fade in/out based on how close we are to the center of the phoneme duration?
+        // Or just full strength. Let's try full strength with smoothing handling the transitions.
+        visemeStrength.current = 1.0;
+      } else {
+        // No active phoneme (silence between words)
+        visemeStrength.current = 0;
+        currentViseme.current = null;
+      }
+    }
 
     Object.keys(dict).forEach((key) => {
       const idx = dict[key];
@@ -279,7 +331,7 @@ export function Avatar(props: AvatarProps) {
       }
     });
 
-    if (visemeStrength.current > 0) {
+    if (!lipSync && visemeStrength.current > 0) {
       visemeStrength.current *= 0.9;
       if (visemeStrength.current < 0.01) {
         visemeStrength.current = 0;
@@ -290,10 +342,10 @@ export function Avatar(props: AvatarProps) {
 
   return (
     <group {...groupProps} dispose={null}>
-      <primitive 
-        object={clonedScene} 
-        scale={1.6} 
-        position={[0, -1.6, 0]} 
+      <primitive
+        object={clonedScene}
+        scale={1.6}
+        position={[0, -1.6, 0]}
       />
     </group>
   );
