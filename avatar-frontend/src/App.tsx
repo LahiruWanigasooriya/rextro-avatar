@@ -4,10 +4,8 @@ import Avatar from './components/Avatar';
 import { Suspense, useState } from 'react';
 import { useVoiceAgent } from './utils/useVoiceAgent';
 import type { ExpressionType } from './components/expressions';
-import { clearStoredToken, getTokenInfo } from './utils/tokenManager';
 
 function App() {
-  const [input, setInput] = useState('');
   const [expression, setExpression] = useState<ExpressionType>('neutral');
   const [text, setText] = useState('');
   const [speak, setSpeak] = useState(false);
@@ -24,12 +22,6 @@ function App() {
     onSpeakChange: setSpeak,
   });
 
-  // Voice mode only - no text input handling
-  const handleSubmit = () => {
-    // Text mode removed - use voice mode only
-    setInput('');
-  };
-
   const handleSpeakEnd = () => {
     setSpeak(false);
     setExpression('neutral');
@@ -41,7 +33,7 @@ function App() {
       setUseVoiceMode(false);
     } else {
       if (!apiKey) {
-        alert('Please set VITE_OPENAI_API_KEY (standard OpenAI API key starting with sk-) in your .env.local file.\nThis will be used to generate ephemeral tokens automatically.');
+        alert('Please set VITE_OPENAI_API_KEY in your .env.local file');
         return;
       }
       try {
@@ -49,26 +41,9 @@ function App() {
         setUseVoiceMode(true);
       } catch (error) {
         console.error('Failed to start voice agent:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        alert(`Failed to start voice agent: ${errorMessage}\n\nCheck console for details.`);
+        alert('Failed to start voice agent. Check console for details.');
       }
     }
-  };
-
-  const handleClearToken = () => {
-    clearStoredToken();
-    alert('Token cache cleared! A new token will be generated on next voice start.');
-  };
-
-  const handleCheckToken = () => {
-    const info = getTokenInfo();
-    const expiryDate = info.expiry ? new Date(Number.parseInt(info.expiry)).toLocaleString() : 'N/A';
-    alert(
-      `Token Info:\n\n` +
-      `Token: ${info.token ? info.token.substring(0, 20) + '...' : 'None'}\n` +
-      `Valid: ${info.isValid ? 'Yes' : 'No'}\n` +
-      `Expires: ${expiryDate}`
-    );
   };
 
   const getStatusColor = () => {
@@ -127,7 +102,7 @@ function App() {
         {getStatusText()}
       </div>
 
-      {/* Transcript Display */}
+      {/* Transcript Display (disabled per request)
       {useVoiceMode && voiceAgent.transcripts.length > 0 && (
         <div style={{
           position: 'absolute',
@@ -153,6 +128,7 @@ function App() {
           ))}
         </div>
       )}
+      */}
 
       {/* Error Display */}
       {voiceAgent.error && (
@@ -202,7 +178,7 @@ function App() {
           {useVoiceMode ? '🔇 Stop Voice Chat' : '🎤 Start Voice Chat'}
         </button>
 
-        {/* Text Input (disabled during voice mode) */}
+        {/* Text Input (disabled per request)
         <div style={{ opacity: useVoiceMode ? 0.5 : 1 }}>
           <input
             value={input}
@@ -235,6 +211,7 @@ function App() {
             Send
           </button>
         </div>
+        */}
       </div>
     </div>
   );

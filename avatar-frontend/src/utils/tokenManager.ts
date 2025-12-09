@@ -1,152 +1,141 @@
-/**
- * Token Manager for OpenAI Realtime API
- * Handles ephemeral token generation, validation, and storage
- */
-
 const TOKEN_STORAGE_KEY = 'openai_realtime_token';
 const TOKEN_EXPIRY_KEY = 'openai_realtime_token_expiry';
-const TOKEN_VALIDITY_DURATION = 60 * 60 * 1000; // 1 hour in milliseconds
+const FALLBACK_TOKEN_LIFETIME_MS = 55 * 60 * 1000; // 55 minutes buffer
 
-interface TokenData {
-  value: string;
-  expires_at?: number;
-}
-
-/**
- * Generate a new ephemeral token from OpenAI API
- */
-async function generateNewToken(apiKey: string): Promise<string> {
-  const sessionConfig = JSON.stringify({
-    session: {
-      type: "realtime",
-      model: "gpt-realtime",
-      audio: {
-        output: { voice: "marin" },
+const SESSION_CONFIG_PAYLOAD = {
+  session: {
+    type: 'realtime',
+    model: 'gpt-4o-realtime-preview-2024-12-17',
+    audio: {
+      output: {
+        voice: 'verse',
+        format: {
+          type: 'audio/pcm',
+          rate: 24000,
+        },
       },
     },
-  });
+  },
+};
 
-  const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
-    method: "POST",
+type ClientSecretResponse = {
+  value: string;
+  expires_at?: number;
+};
+
+const getStorage = (): Storage | null => {
+  if (typeof globalThis === 'undefined') {
+    return null;
+  }
+  const storage = (globalThis as typeof globalThis & { localStorage?: Storage }).localStorage;
+  return storage ?? null;
+};
+
+const readExpiry = (raw: string | null): number | null => {
+  if (!raw) return null;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isExpired = (expiresAt: number | null): boolean => {
+  if (!expiresAt) return false;
+  return Date.now() >= expiresAt;
+};
+
+const persistToken = (token: string, expiresAt: number | null) => {
+  const storage = getStorage();
+  if (!storage) return;
+  storage.setItem(TOKEN_STORAGE_KEY, token);
+  if (expiresAt) {
+    storage.setItem(TOKEN_EXPIRY_KEY, expiresAt.toString());
+  } else {
+    storage.removeItem(TOKEN_EXPIRY_KEY);
+  }
+};
+
+const removeStoredToken = () => {
+  const storage = getStorage();
+  if (!storage) return;
+  storage.removeItem(TOKEN_STORAGE_KEY);
+  storage.removeItem(TOKEN_EXPIRY_KEY);
+};
+
+const requestClientSecret = async (apiKey: string): Promise<ClientSecretResponse> => {
+  const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
+    method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
+      'Content-Type': 'application/json',
     },
-    body: sessionConfig,
+    body: JSON.stringify(SESSION_CONFIG_PAYLOAD),
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    console.error('Token generation failed:', errorText);
-    throw new Error(`Failed to generate token: ${response.status} ${response.statusText}`);
+    const errorText = await response.text().catch(() => response.statusText);
+    throw new Error(`Failed to generate realtime token: ${response.status} ${errorText}`);
   }
 
-  const data: TokenData = await response.json();
-  
-  if (!data.value || !data.value.startsWith('ek_')) {
-    throw new Error('Invalid token received from API');
+  const data = (await response.json()) as ClientSecretResponse;
+  if (!data.value?.startsWith('ek_')) {
+    throw new Error('Unexpected realtime token format received');
   }
+  return data;
+};
 
-  return data.value;
-}
+const computeExpiry = (apiResponse: ClientSecretResponse): number | null => {
+  if (typeof apiResponse.expires_at === 'number' && Number.isFinite(apiResponse.expires_at)) {
+    return apiResponse.expires_at * 1000;
+  }
+  return Date.now() + FALLBACK_TOKEN_LIFETIME_MS;
+};
 
-/**
- * Validate if a token is still valid by checking its format and expiry
- */
-function isTokenValid(token: string | null, expiryTime: string | null): boolean {
-  if (!token || !token.startsWith('ek_')) {
+const isStoredTokenValid = (token: string | null, expiryRaw: string | null): boolean => {
+  if (!token?.startsWith('ek_')) {
     return false;
   }
-
-  if (expiryTime) {
-    const expiry = parseInt(expiryTime, 10);
-    if (Date.now() >= expiry) {
-      console.log('Token expired');
-      return false;
-    }
+  const expiresAt = readExpiry(expiryRaw);
+  if (isExpired(expiresAt)) {
+    return false;
   }
-
   return true;
-}
+};
 
-/**
- * Test if a token works by attempting a connection (optional advanced validation)
- * This is a simple check - you can enhance it if needed
- */
-async function testToken(token: string): Promise<boolean> {
-  try {
-    // Basic format validation
-    if (!token.startsWith('ek_') || token.length < 20) {
-      return false;
-    }
-    
-    // Token is valid if format is correct
-    // The actual connection test will happen when the agent starts
-    return true;
-  } catch (error) {
-    console.error('Token test failed:', error);
-    return false;
+export const clearStoredToken = () => {
+  removeStoredToken();
+};
+
+export const markStoredTokenInvalid = () => {
+  removeStoredToken();
+};
+
+export const getTokenInfo = () => {
+  const storage = getStorage();
+  if (!storage) {
+    return { token: null, expiry: null, isValid: false };
   }
-}
+  const token = storage.getItem(TOKEN_STORAGE_KEY);
+  const expiry = storage.getItem(TOKEN_EXPIRY_KEY);
+  return { token, expiry, isValid: isStoredTokenValid(token, expiry) };
+};
 
-/**
- * Get a valid ephemeral token, generating a new one if necessary
- */
-export async function getValidToken(openAiApiKey: string): Promise<string> {
-  try {
-    // Check localStorage for existing token
-    const storedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
-    const storedExpiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
-
-    // Validate stored token
-    if (isTokenValid(storedToken, storedExpiry)) {
-      console.log('Using cached valid token');
-      const isValid = await testToken(storedToken!);
-      
-      if (isValid) {
-        return storedToken!;
-      } else {
-        console.log('Cached token failed validation, generating new token');
-      }
-    } else {
-      console.log('No valid cached token found, generating new token');
-    }
-
-    // Generate new token
-    console.log('Generating new ephemeral token...');
-    const newToken = await generateNewToken(openAiApiKey);
-    
-    // Store token with expiry time
-    const expiryTime = Date.now() + TOKEN_VALIDITY_DURATION;
-    localStorage.setItem(TOKEN_STORAGE_KEY, newToken);
-    localStorage.setItem(TOKEN_EXPIRY_KEY, expiryTime.toString());
-    
-    console.log('New token generated and stored successfully');
-    return newToken;
-  } catch (error) {
-    console.error('Error in getValidToken:', error);
-    throw new Error(
-      `Failed to get valid token: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+export const getValidToken = async (apiKey: string): Promise<string> => {
+  if (!apiKey?.startsWith('sk-')) {
+    throw new Error('A standard OpenAI API key (starts with sk-) is required to mint realtime tokens');
   }
-}
 
-/**
- * Clear stored token (useful for logout or manual refresh)
- */
-export function clearStoredToken(): void {
-  localStorage.removeItem(TOKEN_STORAGE_KEY);
-  localStorage.removeItem(TOKEN_EXPIRY_KEY);
-  console.log('Stored token cleared');
-}
+  const storage = getStorage();
+  const storedToken = storage?.getItem(TOKEN_STORAGE_KEY) ?? null;
+  const storedExpiry = storage?.getItem(TOKEN_EXPIRY_KEY) ?? null;
+  if (isStoredTokenValid(storedToken, storedExpiry) && storedToken) {
+    return storedToken;
+  }
 
-/**
- * Get token info for debugging
- */
-export function getTokenInfo(): { token: string | null; expiry: string | null; isValid: boolean } {
-  const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-  const expiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
-  const isValid = isTokenValid(token, expiry);
-  
-  return { token, expiry, isValid };
-}
+  if (storedToken) {
+    removeStoredToken();
+  }
+
+  const secret = await requestClientSecret(apiKey);
+  const expiresAt = computeExpiry(secret);
+  persistToken(secret.value, expiresAt);
+  return secret.value;
+};

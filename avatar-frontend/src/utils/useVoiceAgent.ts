@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createVoiceAgent, type VoiceAgentStatus, type TranscriptEntry } from '../utils/voiceAgent';
 import type { ExpressionType } from '../components/expressions';
-import { getValidToken } from '../utils/tokenManager';
+import { getValidToken } from './tokenManager';
 
 type UseVoiceAgentOptions = {
   apiKey: string;
@@ -60,9 +60,8 @@ export function useVoiceAgent(options: UseVoiceAgentOptions) {
   useEffect(() => {
     agentRef.current = createVoiceAgent({
       getApiKey: async () => {
-        // Get valid ephemeral token (will generate new one if needed)
-        const ephemeralToken = await getValidToken(options.apiKey);
-        return ephemeralToken;
+        const token = await getValidToken(options.apiKey);
+        return token;
       },
       instructions: options.instructions || 
         `You are "Ava", a friendly and expressive Sinhala-speaking virtual assistant avatar. Your role is to communicate naturally in Sinhala language while maintaining emotional expressiveness.
