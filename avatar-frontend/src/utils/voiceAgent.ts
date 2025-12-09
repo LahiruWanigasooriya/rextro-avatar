@@ -1,5 +1,6 @@
 import { RealtimeAgent, RealtimeSession } from '@openai/agents/realtime';
 import type { RealtimeItem } from '@openai/agents/realtime';
+import { markStoredTokenInvalid } from './tokenManager';
 
 export type VoiceAgentStatus = 'idle' | 'connecting' | 'connected' | 'error';
 
@@ -48,6 +49,17 @@ export function createVoiceAgent(options: VoiceAgentOptions) {
   const session = new RealtimeSession(agent, {
     model: 'gpt-4o-realtime-preview-2024-12-17',
     transport: 'webrtc',
+    config: {
+      audio: {
+        output: {
+          voice: options.voice ?? 'verse',
+          format: {
+            type: 'audio/pcm',
+            rate: 24000,
+          },
+        },
+      },
+    },
   });
 
   let status: VoiceAgentStatus = 'idle';
@@ -105,6 +117,9 @@ export function createVoiceAgent(options: VoiceAgentOptions) {
       setStatus('connected');
     } catch (err) {
       console.error('Connection failed:', err);
+      if (shouldInvalidateToken(err)) {
+        markStoredTokenInvalid();
+      }
       if (err instanceof Error) {
         console.error('Error details:', {
           message: err.message,
@@ -116,6 +131,27 @@ export function createVoiceAgent(options: VoiceAgentOptions) {
       options.onError?.(err);
       throw err;
     }
+  };
+
+  const shouldInvalidateToken = (err: unknown): boolean => {
+    if (!err) return false;
+    const code = typeof err === 'object' && err && 'code' in err ? toSafeString((err as { code?: unknown }).code) : '';
+    const status = typeof err === 'object' && err && 'status' in err ? toSafeString((err as { status?: unknown }).status) : '';
+    const message = err instanceof Error ? err.message : toSafeString(err);
+    const normalized = message.toLowerCase();
+    return (
+      code.toLowerCase() === 'invalid_api_key' ||
+      status === '401' ||
+      normalized.includes('invalid api key') ||
+      normalized.includes('unauthorized') ||
+      normalized.includes('401')
+    );
+  };
+
+  const toSafeString = (value: unknown): string => {
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    return '';
   };
 
   const stop = async () => {

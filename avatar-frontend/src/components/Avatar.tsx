@@ -201,6 +201,7 @@ export function Avatar(props: AvatarProps) {
     utterance.lang = "si-LK"; // Sinhala language
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
+    utterance.volume = 0; // Keep fallback speech silent to avoid duplicate audible voices
 
     // Try to find a Sinhala voice, fallback to default
     const voices = speechSynthesis.getVoices();
