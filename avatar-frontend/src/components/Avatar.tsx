@@ -13,6 +13,7 @@ type AvatarProps = ThreeElements["group"] & {
   text?: string;
   speak?: boolean;
   onSpeakEnd?: () => void;
+  audioStream?: MediaStream; // Optional audio stream for real-time lip sync
 };
 
 export function Avatar(props: AvatarProps) {
@@ -21,6 +22,7 @@ export function Avatar(props: AvatarProps) {
     text = "",
     speak = false,
     onSpeakEnd,
+    audioStream,
     ...groupProps
   } = props;
 
@@ -34,6 +36,9 @@ export function Avatar(props: AvatarProps) {
   const currentViseme = useRef<string | null>(null);
   const visemeStrength = useRef<number>(0);
   const smoothing = 0.12;
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioDataRef = useRef<Uint8Array | null>(null);
 
   useEffect(() => {
     clonedScene.traverse((child) => {
@@ -76,60 +81,157 @@ export function Avatar(props: AvatarProps) {
     });
   }, [expression]);
 
+  // Real-time audio stream lip sync (for OpenAI Realtime API audio)
   useEffect(() => {
-    if (!speak || !text) {
-      currentViseme.current = null;
-      visemeStrength.current = 0;
+    if (!audioStream) return;
+
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const analyser = audioContext.createAnalyser();
+    const source = audioContext.createMediaStreamSource(audioStream);
+    
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.8;
+    source.connect(analyser);
+    
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    let animationId: number;
+    
+    const analyze = () => {
+      analyser.getByteFrequencyData(dataArray);
+      
+      // Calculate average volume
+      const average = dataArray.reduce((sum, value) => sum + value, 0) / bufferLength;
+      const normalizedVolume = average / 255;
+      
+      if (normalizedVolume > 0.02) {
+        // Analyze frequency bands for better viseme selection
+        const lowFreq = dataArray.slice(0, 10).reduce((sum, v) => sum + v, 0) / 10 / 255;
+        const midFreq = dataArray.slice(10, 30).reduce((sum, v) => sum + v, 0) / 20 / 255;
+        const highFreq = dataArray.slice(30, 60).reduce((sum, v) => sum + v, 0) / 30 / 255;
+        
+        // More sophisticated viseme selection based on formants
+        if (highFreq > 0.3 && highFreq > midFreq * 1.2) {
+          currentViseme.current = 'viseme_I'; // ee/i sounds
+          visemeStrength.current = Math.min(normalizedVolume * 3, 1.0);
+        } else if (lowFreq > 0.3 && lowFreq > midFreq * 1.2) {
+          currentViseme.current = 'viseme_U'; // oo/u sounds
+          visemeStrength.current = Math.min(normalizedVolume * 3, 1.0);
+        } else if (midFreq > 0.25) {
+          currentViseme.current = 'viseme_aa'; // ah/a sounds
+          visemeStrength.current = Math.min(normalizedVolume * 3, 1.0);
+        } else if (normalizedVolume > 0.15) {
+          currentViseme.current = 'mouthOpen';
+          visemeStrength.current = Math.min(normalizedVolume * 2.5, 0.8);
+        } else {
+          visemeStrength.current = Math.min(normalizedVolume * 2, 0.5);
+        }
+      } else {
+        // Smooth closing
+        visemeStrength.current *= 0.85;
+        if (visemeStrength.current < 0.03) {
+          currentViseme.current = null;
+          visemeStrength.current = 0;
+        }
+      }
+      
+      animationId = requestAnimationFrame(analyze);
+    };
+    
+    analyze();
+    
+    return () => {
+      cancelAnimationFrame(animationId);
+      source.disconnect();
+      audioContext.close();
+    };
+  }, [audioStream]);
+
+  // Text-to-speech lip sync (fallback when no audio stream)
+  useEffect(() => {
+    // Skip TTS if we have a real audio stream (from OpenAI Realtime API)
+    if (audioStream || !speak || !text) {
+      if (!audioStream && !speak) {
+        currentViseme.current = null;
+        visemeStrength.current = 0;
+      }
       return;
     }
 
+    // Initialize audio context and analyzer for lip sync
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      analyserRef.current = audioContextRef.current.createAnalyser();
+      analyserRef.current.fftSize = 256;
+      const bufferLength = analyserRef.current.frequencyBinCount;
+      audioDataRef.current = new Uint8Array(bufferLength);
+    }
+
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
+    utterance.lang = "si-LK"; // Sinhala language
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
 
-    let charIndex = 0;
-    const chars = text.toLowerCase().split('');
-    
-    const animationInterval = setInterval(() => {
-      if (charIndex < chars.length) {
-        const char = chars[charIndex];
-        
-        const visemeMap: Record<string, string> = {
-          'a': 'viseme_aa',
-          'e': 'viseme_E', 
-          'i': 'viseme_I',
-          'o': 'viseme_O',
-          'u': 'viseme_U',
-          'p': 'viseme_PP',
-          'b': 'viseme_PP',
-          'm': 'viseme_PP',
-          'f': 'viseme_FF',
-          'v': 'viseme_FF',
-        };
+    // Try to find a Sinhala voice, fallback to default
+    const voices = speechSynthesis.getVoices();
+    const sinhalaVoice = voices.find(voice => voice.lang.startsWith('si')) || 
+                         voices.find(voice => voice.lang.startsWith('en'));
+    if (sinhalaVoice) {
+      utterance.voice = sinhalaVoice;
+    }
 
-        const viseme = visemeMap[char];
-        if (viseme) {
-          currentViseme.current = viseme;
-          visemeStrength.current = 1.0;
-        } else if (char !== ' ') {
-          currentViseme.current = 'mouthOpen';
-          visemeStrength.current = 0.3;
+    let animationFrame: number;
+    const analyzeAudio = () => {
+      if (!analyserRef.current || !audioDataRef.current) return;
+      
+      analyserRef.current.getByteFrequencyData(audioDataRef.current);
+      
+      // Calculate average volume
+      const average = audioDataRef.current.reduce((sum, value) => sum + value, 0) / audioDataRef.current.length;
+      const normalizedVolume = average / 255;
+      
+      // Map volume to mouth opening
+      if (normalizedVolume > 0.05) {
+        // Determine viseme based on frequency distribution
+        const lowFreq = audioDataRef.current.slice(0, 10).reduce((sum, v) => sum + v, 0) / 10;
+        const midFreq = audioDataRef.current.slice(10, 30).reduce((sum, v) => sum + v, 0) / 20;
+        const highFreq = audioDataRef.current.slice(30, 60).reduce((sum, v) => sum + v, 0) / 30;
+        
+        // Select viseme based on frequency content
+        if (highFreq > midFreq && highFreq > lowFreq) {
+          currentViseme.current = 'viseme_I'; // High frequencies = ee/i sounds
+        } else if (lowFreq > midFreq) {
+          currentViseme.current = 'viseme_O'; // Low frequencies = oh/oo sounds
+        } else {
+          currentViseme.current = 'viseme_aa'; // Mid frequencies = ah sounds
         }
         
-        charIndex++;
+        visemeStrength.current = Math.min(normalizedVolume * 2, 1.0);
+      } else {
+        visemeStrength.current *= 0.8;
+        if (visemeStrength.current < 0.05) {
+          currentViseme.current = null;
+          visemeStrength.current = 0;
+        }
       }
-    }, 80);
+      
+      animationFrame = requestAnimationFrame(analyzeAudio);
+    };
+
+    utterance.onstart = () => {
+      animationFrame = requestAnimationFrame(analyzeAudio);
+    };
 
     utterance.onend = () => {
-      clearInterval(animationInterval);
+      cancelAnimationFrame(animationFrame);
       currentViseme.current = null;
       visemeStrength.current = 0;
       onSpeakEnd?.();
     };
 
     utterance.onerror = () => {
-      clearInterval(animationInterval);
+      cancelAnimationFrame(animationFrame);
       currentViseme.current = null;
       visemeStrength.current = 0;
       onSpeakEnd?.();
@@ -139,10 +241,10 @@ export function Avatar(props: AvatarProps) {
     speechSynthesis.speak(utterance);
 
     return () => {
-      clearInterval(animationInterval);
+      cancelAnimationFrame(animationFrame);
       speechSynthesis.cancel();
     };
-  }, [speak, text, onSpeakEnd]);
+  }, [speak, text, onSpeakEnd, audioStream]);
 
   useFrame(() => {
     const head = headRef.current;
