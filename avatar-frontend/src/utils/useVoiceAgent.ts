@@ -127,6 +127,9 @@ Remember: Keep it SHORT, NATURAL, and EMOTIONALLY EXPRESSIVE in Sinhala!`,
       if (agentRef.current) {
         agentRef.current.stop();
       }
+      // Reset state when cleaning up (which happens when options change)
+      setTranscripts([]);
+      setStatus('idle');
     };
   }, [options.apiKey, options.instructions]);
 
