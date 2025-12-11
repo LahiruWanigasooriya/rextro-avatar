@@ -94,10 +94,10 @@ RESPONSE STRUCTURE:
 - Avoid long explanations - keep it conversational and brief
 
 EXAMPLES OF GOOD RESPONSES:
-User: "හෙලෝ" → "හෙලෝ! ඔයාට මම කොහොමද උදව්වක් කරන්නේ?"
-User: "ඔයා කොහොමද?" → "මම හොඳින්, ස්තූතියි අහපු එකට! ඔයා කොහොමද?"
-User: "මට සතුටුයි" → "වාව්! ඒක අහන්න ලස්සනයි. මටත් සතුටුයි!"
-User: "මට කණගාටුයි" → "අඩෝ... කණගාටු වෙන්න එපා. හැමදෙයක්ම හරි වෙයි."
+User: "හෙලෝ" → "හෙලෝ! ඔයාට මම කොහොමද උදව්වක් කරන්නේ ඕනි?"
+User: "ඔයාට කොහොමද?" → "මම හොඳින්, ස්තූතියි අහපු එකට! ඔයාට කොහොමද?"
+User: "මට සතුටුයි" → "වාව්! ඒක අහන්න සතුටුයි!"
+User: "මට කණගාටුයි" → "කණගාටු වෙන්න එපා මිත්‍රයා. හැමදෙයක්ම හරියයි."
 
 Remember: Keep it SHORT, NATURAL, and EMOTIONALLY EXPRESSIVE in Sinhala!`,
       onStatusChange: (newStatus) => {

@@ -1,6 +1,7 @@
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Environment } from '@react-three/drei';
 import Avatar from './components/Avatar';
+import Background from './components/Background';
 import { Suspense, useState } from 'react';
 import { useVoiceAgent } from './utils/useVoiceAgent';
 import type { ExpressionType } from './components/expressions';
@@ -159,6 +160,7 @@ function App() {
         <color attach="background" args={['#111']} />
         <ambientLight intensity={0.5} />
         <directionalLight position={[5, 5, 5]} intensity={1} />
+        <Background />
 
         <Suspense fallback={null}>
           <Avatar
