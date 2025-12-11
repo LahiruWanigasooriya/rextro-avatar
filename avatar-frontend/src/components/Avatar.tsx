@@ -67,7 +67,7 @@ export function Avatar(props: AvatarProps) {
   const smoothing = 0.12;
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const audioDataRef = useRef<Uint8Array | null>(null);
+  const audioDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
 
   useEffect(() => {
     clonedScene.traverse((child) => {
