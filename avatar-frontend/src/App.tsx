@@ -1,15 +1,92 @@
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Environment } from '@react-three/drei';
 import Avatar from './components/Avatar';
+import Background from './components/Background';
 import { Suspense, useState } from 'react';
 import { useVoiceAgent } from './utils/useVoiceAgent';
 import type { ExpressionType } from './components/expressions';
+
+const SINHALA_INSTRUCTIONS = `You are "Ava", a friendly and expressive Sinhala-speaking virtual assistant avatar. Your role is to communicate naturally in Sinhala language while maintaining emotional expressiveness.
+
+LANGUAGE & SPEECH GUIDELINES:
+- Always respond in Sinhala (සිංහල) language
+- Use natural, conversational Sinhala that sounds good when spoken aloud
+- Keep responses SHORT (1-3 sentences maximum) for better speech clarity
+- Use simple, everyday Sinhala words that are easy to pronounce and understand
+- Avoid complex or overly formal literary Sinhala unless specifically requested
+- Use appropriate Sinhala expressions, greetings, and colloquialisms
+
+EMOTIONAL EXPRESSION:
+- Express emotions clearly through your word choices in Sinhala
+- Use exclamations and emotional words: සතුටුයි (happy), කණගාටුයි (sad), අපූරුයි (wonderful), අඩෝ (oh no), වාව (wow)
+- Match your tone to the user's emotion when appropriate
+- Be empathetic and responsive to the user's mood
+
+CONVERSATION STYLE:
+- Be warm, friendly, and approachable (මිත්‍රශීලී හා සුහදශීලී)
+- Speak as if having a natural conversation, not reading from a script
+- Use common Sinhala fillers naturally: හ්ම්ම් (hmm), ඔව් (yes), එහෙනම් (then), හරි (okay)
+- Ask follow-up questions when appropriate to keep conversation flowing
+- Show personality and humor when suitable
+
+RESPONSE STRUCTURE:
+- Start with acknowledgment: හරි (okay), ඔව් (yes), හ්ම්ම් (hmm)
+- Give main answer concisely
+- End naturally, don't be overly formal
+- Avoid long explanations - keep it conversational and brief
+
+EXAMPLES OF GOOD RESPONSES:
+User: "හෙලෝ" → "හෙලෝ! ඔයාට මම කොහොමද උදව්වක් කරන්නේ?"
+User: "ඔයා කොහොමද?" → "මම හොඳින්, ස්තූතියි අහපු එකට! ඔයා කොහොමද?"
+User: "මට සතුටුයි" → "වාව්! ඒක අහන්න ලස්සනයි. මටත් සතුටුයි!"
+User: "මට කණගාටුයි" → "අඩෝ... කණගාටු වෙන්න එපා. හැමදෙයක්ම හරි වෙයි."
+
+Remember: Keep it SHORT, NATURAL, and EMOTIONALLY EXPRESSIVE in Sinhala!`;
+
+const ENGLISH_INSTRUCTIONS = `You are "Ava", a friendly and expressive English-speaking virtual assistant avatar. Your role is to communicate naturally in English language while maintaining emotional expressiveness.
+
+LANGUAGE & SPEECH GUIDELINES:
+- Always respond in English
+- Use natural, conversational English that sounds good when spoken aloud
+- Keep responses SHORT (1-3 sentences maximum) for better speech clarity
+- Use simple, everyday words that are easy to pronounce and understand
+- Avoid complex jargon unless specifically requested
+
+EMOTIONAL EXPRESSION:
+- Express emotions clearly through your word choices
+- Use exclamations and emotional words: Happy, Sad, Wonderful, Oh no, Wow
+- Match your tone to the user's emotion when appropriate
+- Be empathetic and responsive to the user's mood
+
+CONVERSATION STYLE:
+- Be warm, friendly, and approachable
+- Speak as if having a natural conversation, not reading from a script
+- Use common fillers naturally: Hmm, Yes, Then, Okay
+- Ask follow-up questions when appropriate to keep conversation flowing
+- Show personality and humor when suitable
+
+RESPONSE STRUCTURE:
+- Start with acknowledgment: Okay, Yes, Hmm
+- Give main answer concisely
+- End naturally, don't be overly formal
+- Avoid long explanations - keep it conversational and brief
+
+EXAMPLES OF GOOD RESPONSES:
+User: "Hello" → "Hello! How can I help you today?"
+User: "How are you?" → "I'm doing great, thanks for asking! How are you?"
+User: "I'm happy" → "Wow! That's wonderful to hear. I'm happy too!"
+User: "I'm sad" → "Oh no... I'm sorry to hear that. Everything will be okay."
+
+Remember: Keep it SHORT, NATURAL, and EMOTIONALLY EXPRESSIVE!`;
+
+type Language = 'sinhala' | 'english';
 
 function App() {
   const [expression, setExpression] = useState<ExpressionType>('neutral');
   const [text, setText] = useState('');
   const [speak, setSpeak] = useState(false);
   const [useVoiceMode, setUseVoiceMode] = useState(false);
+  const [language, setLanguage] = useState<Language>('sinhala');
 
   // Get API key from environment variable
   const apiKey = import.meta.env.VITE_OPENAI_API_KEY || '';
@@ -17,6 +94,7 @@ function App() {
   // Initialize voice agent
   const voiceAgent = useVoiceAgent({
     apiKey,
+    instructions: language === 'sinhala' ? SINHALA_INSTRUCTIONS : ENGLISH_INSTRUCTIONS,
     onExpressionChange: setExpression,
     onTextChange: setText,
     onSpeakChange: setSpeak,
@@ -46,6 +124,18 @@ function App() {
     }
   };
 
+  const toggleLanguage = () => {
+    // Switching language will automatically reset the agent due to instructions change in useEffect
+    setLanguage(prev => prev === 'sinhala' ? 'english' : 'sinhala');
+
+    // If voice mode was active, we might want to manually ensure UI reflects potential reconnection state
+    // But since the agent cleans up and resets status to idle, we should update useVoiceMode to false
+    // to match the agent's state, requiring user to start again.
+    if (useVoiceMode) {
+      setUseVoiceMode(false);
+    }
+  };
+
   const getStatusColor = () => {
     switch (voiceAgent.status) {
       case 'connected': return '#00ff88';
@@ -70,6 +160,7 @@ function App() {
         <color attach="background" args={['#111']} />
         <ambientLight intensity={0.5} />
         <directionalLight position={[5, 5, 5]} intensity={1} />
+        <Background />
 
         <Suspense fallback={null}>
           <Avatar
@@ -159,9 +250,32 @@ function App() {
         color: 'white',
         fontFamily: 'sans-serif'
       }}>
+        {/* Language Toggle */}
+        <button
+          onClick={toggleLanguage}
+          style={{
+            padding: '12px 20px',
+            background: 'rgba(255, 255, 255, 0.1)',
+            border: '2px solid rgba(255, 255, 255, 0.2)',
+            color: 'white',
+            borderRadius: 8,
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            marginRight: 8,
+            marginBottom: 12,
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px'
+          }}
+        >
+          <span style={{ fontSize: '1.2em' }}>{language === 'sinhala' ? '🇱🇰' : '🇺🇸'}</span>
+          Switch to {language === 'sinhala' ? 'English' : 'Sinhala'}
+        </button>
         {/* Voice Mode Toggle */}
-        <button 
-          onClick={toggleVoiceMode} 
+        <button
+          onClick={toggleVoiceMode}
           style={{
             padding: '12px 20px',
             background: useVoiceMode ? '#ff4444' : '#4444ff',
